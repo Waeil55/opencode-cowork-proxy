@@ -151,7 +151,7 @@ describe('worker routing', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('https://opencode.ai/zen/go/v1/models', {
       method: 'GET',
-      headers: { Authorization: `Bearer ${key}` },
+      headers: { Authorization: `Bearer ${key}`, 'X-Opencode-Session': 'desktop-chat' },
     });
   });
 
@@ -168,7 +168,7 @@ describe('worker routing', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('https://opencode.ai/zen/v1/models', {
       method: 'GET',
-      headers: { Authorization: `Bearer ${key}` },
+      headers: { Authorization: `Bearer ${key}`, 'X-Opencode-Session': 'desktop-chat' },
     });
   });
 
