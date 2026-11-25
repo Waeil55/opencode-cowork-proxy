@@ -9,6 +9,8 @@ import { streamAnthropicToOpenAI } from './translate/stream/anthropic-to-openai'
 
 const GO_UPSTREAM = "https://opencode.ai/zen/go/v1";
 const ZEN_UPSTREAM = "https://opencode.ai/zen/v1";
+const OCGO_UPSTREAM = "https://opencode.ai/inference/go/openai/v1";
+const SESSION_FALLBACK = "desktop-chat";
 const DEFAULT_UPSTREAM = GO_UPSTREAM;
 const VISION_MODEL = "qwen3.6-plus";
 
@@ -36,6 +38,12 @@ function extractModelSegment(path: string): { path: string; model: string | null
 
 function routeConfig(request: Request): RouteConfig {
   const path = new URL(request.url).pathname;
+  const ocgoPath = stripPrefix(path, "/ocgo");
+  if (ocgoPath) {
+    const { path: remaining, model } = extractModelSegment(ocgoPath);
+    return { path: remaining, upstream: OCGO_UPSTREAM, modelOverride: model };
+  }
+
   const goPath = stripPrefix(path, "/go");
   if (goPath) {
     const { path: remaining, model } = extractModelSegment(goPath);
@@ -59,6 +67,10 @@ function getUpstream(request: Request, routeUpstream: string): string {
 function upstreamFormat(request: Request): "openai" | "anthropic" {
   const fmt = (request.headers.get("X-Upstream-Format") || "openai").toLowerCase();
   return fmt === "anthropic" ? "anthropic" : "openai";
+}
+
+function sessionId(request: Request): string {
+  return request.headers.get("X-Opencode-Session") || SESSION_FALLBACK;
 }
 
 function anthropicHeaders(request: Request, key: string): Record<string, string> {
@@ -104,7 +116,7 @@ async function handleRequest(request: Request): Promise<Response> {
         const req = await request.json();
         const originalModel = req.model;
         if (route.modelOverride) req.model = route.modelOverride;
-        if (hasImages(req)) {
+        if (hasImages(req) && route.upstream !== OCGO_UPSTREAM) {
           req.model = VISION_MODEL;
         }
         const openaiReq = formatAnthropicToOpenAI(req);
@@ -112,7 +124,7 @@ async function handleRequest(request: Request): Promise<Response> {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${key}`,
+            "Authorization": `Bearer ${key}`, "X-Opencode-Session": sessionId(request),
           },
           body: JSON.stringify(openaiReq),
         });
@@ -168,7 +180,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Pass-through to OpenAI upstream
       const res = await fetch(`${upstream}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}`, "X-Opencode-Session": sessionId(request) },
         body: await request.text(),
       });
       return res;
@@ -187,7 +199,7 @@ async function handleRequest(request: Request): Promise<Response> {
           })
         : await fetch(`${upstream}/models`, {
             method: "GET",
-            headers: { "Authorization": `Bearer ${key}` },
+            headers: { "Authorization": `Bearer ${key}`, "X-Opencode-Session": sessionId(request) },
       });
       if (!res.ok) return upstreamErrorResponse(res, await res.text());
       return new Response(await res.text(), { headers: { "Content-Type": "application/json" } });
@@ -199,6 +211,7 @@ async function handleRequest(request: Request): Promise<Response> {
     routes: {
       "/go": GO_UPSTREAM,
       "/zen": ZEN_UPSTREAM,
+      "/ocgo": OCGO_UPSTREAM,
     },
     endpoints: {
       "/v1/messages": "Anthropic → upstream (translated if upstream=openai)",
